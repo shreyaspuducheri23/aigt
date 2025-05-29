@@ -45,7 +45,7 @@ from monai.metrics import (
 )
 
 from lr_scheduler import PolyLRScheduler, LinearWarmupWrapper
-from UltrasoundDataset import UltrasoundDataset
+from UltrasoundDataset_png import UltrasoundDataset
 
 
 # Parse command line arguments
@@ -226,7 +226,7 @@ def main(args):
             softmax=use_softmax,
             lambda_dice=(1.0 - config["lambda_ce"]), 
             lambda_ce=config["lambda_ce"],
-            ce_weight=ce_weight
+            weight=ce_weight
         )
 
     # Construct model
