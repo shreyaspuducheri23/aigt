@@ -13,8 +13,8 @@ from PIL import Image
 
 from monai.metrics import DiceMetric, MeanIoU, ConfusionMatrixMetric
 from monai.data import DataLoader
-from monai.transforms import Compose, AsDiscrete
-from UltrasoundDataset import UltrasoundDataset
+from monai.transforms import Compose, AsDiscrete, Transposed, ToTensord, EnsureTyped, Resized
+from UltrasoundDataset_png import UltrasoundDataset
 
 from metrics import FuzzyMetrics
 
@@ -46,6 +46,20 @@ def test_model(model_path: str,
     test_transforms = Compose([
         # Assuming the transforms for the test dataset are the same as the validation dataset in train.py
         # Add transforms here later if needed
+        Transposed(
+            keys=["image", "label"],
+            indices=[2, 0, 1]
+        ),
+        ToTensord(keys=["image", "label"]),
+        EnsureTyped(
+            keys=["image", "label"], 
+            dtype=torch.float32
+        ),
+        Resized(
+            keys=["image", "label"],
+            spatial_size=[240, 320],
+            mode=["bilinear", "nearest"]  
+        ),
     ])
 
     # Create test dataset and dataloader
@@ -112,8 +126,6 @@ def test_model(model_path: str,
         for batch_index, test_data in enumerate(tqdm.tqdm(test_loader)):
             inputs, labels = test_data["image"].to(device), test_data["label"].to(device)
             inputs = inputs.float()
-            inputs = inputs.permute(0, 3, 1, 2)
-            labels = labels.permute(0, 3, 1, 2)
             labels = monai.networks.one_hot(labels, num_classes=num_classes)
 
             if LIMIT_TEST_BATCHES is not None:
@@ -161,7 +173,7 @@ def test_model(model_path: str,
                     input_image = input_image * 255
                 input_image = input_image.astype("uint8")
                 input_image = input_image[:, :, 0]
-                input_image = np.flip(input_image, axis=0)  # Flip the image vertically
+                # input_image = np.flip(input_image, axis=0)  # Flip the image vertically
                 input_image_pil = Image.fromarray(input_image)
                 input_image_pil.save(Path(output_dir) / f"{batch_index:04}_input.png")
 
@@ -170,7 +182,7 @@ def test_model(model_path: str,
                 label_image = (1.0 - label_image) * 255
                 label_image = label_image.astype("uint8")
                 label_image = label_image[:, :, 0]
-                label_image = np.flip(label_image, axis=0)
+                # label_image = np.flip(label_image, axis=0) # why flip??
                 label_image_pil = Image.fromarray(label_image)
                 label_image_pil.save(Path(output_dir) / f"{batch_index:04}_label.png")
 
@@ -179,9 +191,33 @@ def test_model(model_path: str,
                 output_image = (1.0 - output_image) * 255  # Invert the background, which results in the sum of all labels
                 output_image = output_image.astype("uint8")
                 output_image = output_image[:, :, 0]
-                output_image = np.flip(output_image, axis=0)
+                # output_image = np.flip(output_image, axis=0) # why flip??
                 output_image_pil = Image.fromarray(output_image)
                 output_image_pil.save(Path(output_dir) / f"{batch_index:04}_output.png")
+
+                # Create a combined overlay of input with ground-truth (blue) and prediction (yellow) with transparency
+                # Convert input to RGB
+                input_rgb = Image.fromarray(input_image).convert("RGB")
+                # Extract ground-truth and prediction masks
+                gt_mask = (labels[0, 1].cpu().numpy() * 255).astype("uint8")
+                pred_mask = (outputs_crisp[0, 1].cpu().numpy() * 255).astype("uint8")
+                H, W = gt_mask.shape
+                # Create alpha channels with reduced opacity (50%)
+                gt_alpha_np = (gt_mask // 2).astype("uint8")
+                pred_alpha_np = (pred_mask // 2).astype("uint8")
+                gt_alpha = Image.fromarray(gt_alpha_np).convert("L")
+                pred_alpha = Image.fromarray(pred_alpha_np).convert("L")
+                # Create RGBA images for masks using colorblind-friendly colors
+                gt_rgba = Image.new("RGBA", (W, H), color=(0, 0, 255, 0))      # Blue for ground truth
+                pred_rgba = Image.new("RGBA", (W, H), color=(255, 255, 0, 0))  # Yellow for prediction
+                gt_rgba.putalpha(gt_alpha)
+                pred_rgba.putalpha(pred_alpha)
+                # Overlay masks on input
+                combined = input_rgb.convert("RGBA")
+                combined = Image.alpha_composite(combined, gt_rgba)
+                combined = Image.alpha_composite(combined, pred_rgba)
+                combined = combined.convert("RGB")
+                combined.save(Path(output_dir) / f"{batch_index:04}_combined.png")
 
                 # Plot the input, label, and output images
                 if plot_idx == 0:
